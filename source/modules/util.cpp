@@ -459,24 +459,25 @@ void PushJSONValue(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::Value& 
 		JSONToTableRecursive(pLua, jsonValue, false, nIgnoreConversions);
 	} else if (jsonValue.IsString()) {
 		const char* valueStr = jsonValue.GetString();
-		if (jsonValue.GetStringLength() > 2 && valueStr[0] == '[' && valueStr[jsonValue.GetStringLength() - 1] == ']') {
+		size_t iStrLength = jsonValue.GetStringLength();
+		if (iStrLength > 2 && valueStr[0] == '[' && valueStr[iStrLength - 1] == ']') {
 			Vector vec;
 			int nParsed = sscanf(valueStr + 1, "%f %f %f", &vec.x, &vec.y, &vec.z);
 			if (nParsed == 3) {
 				pLua->PushVector(vec);
 			} else {
-				pLua->PushString(valueStr);
+				pLua->PushString(valueStr, iStrLength);
 			}
-		} else if (jsonValue.GetStringLength() > 2 && valueStr[0] == '{' && valueStr[jsonValue.GetStringLength() - 1] == '}') {
+		} else if (iStrLength > 2 && valueStr[0] == '{' && valueStr[iStrLength - 1] == '}') {
 			QAngle ang;
 			int nParsed = sscanf(valueStr + 1, "%f %f %f", &ang.x, &ang.y, &ang.z);
 			if (nParsed == 3) {
 				pLua->PushAngle(ang);
 			} else {
-				pLua->PushString(valueStr);
+				pLua->PushString(valueStr, iStrLength);
 			}
 		} else {
-			pLua->PushString(valueStr);
+			pLua->PushString(valueStr, iStrLength);
 		}
 	} else if (jsonValue.IsNumber()) {
 		pLua->PushNumber(jsonValue.GetDouble());
@@ -495,11 +496,15 @@ void JSONToTableRecursive(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::
 			const char* pKeyStr = itr->name.GetString();
 			size_t iKeyLen = itr->name.GetStringLength();
 			
-			long long lNum;
-			if (!nIgnoreConversions && StrToIntFast(pKeyStr, iKeyLen, lNum)) {
-				pLua->PushNumber(lNum);
-			} else {
+			if (nIgnoreConversions) {
 				pLua->PushString(pKeyStr, iKeyLen);
+			} else {
+				long long lNum;
+				if (StrToIntFast(pKeyStr, iKeyLen, lNum)) {
+					pLua->PushNumber(lNum);
+				} else {
+					pLua->PushString(pKeyStr, iKeyLen);
+				}
 			}
 
 			PushJSONValue(pLua, itr->value, nIgnoreConversions);
