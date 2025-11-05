@@ -3,6 +3,10 @@
 #include "lua.h"
 #include "Bootil/Bootil.h"
 #include <lz4/lz4_compression.h>
+
+#ifdef isdigit
+#undef isdigit
+#endif
 #include <charconv>
 
 #include "bootil/src/3rdParty/rapidjson/rapidjson.h"
