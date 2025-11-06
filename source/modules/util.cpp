@@ -496,13 +496,9 @@ void JSONToTableRecursive(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::
 			if (nIgnoreConversions) {
 				pLua->PushString(pKeyStr, iKeyLen);
 			} else {
-				if (iKeyLen > 0 && ((pKeyStr[0] >= '0' && pKeyStr[0] <= '9') || pKeyStr[0] == '-')) {
-					long long lNum;
-					if (StrToIntFast(pKeyStr, iKeyLen, lNum)) {
-						pLua->PushNumber(lNum);
-					} else {
-						pLua->PushString(pKeyStr, iKeyLen);
-					}
+				long long lNum;
+				if (StrToIntFast(pKeyStr, iKeyLen, lNum)) {
+					pLua->PushNumber(lNum);
 				} else {
 					pLua->PushString(pKeyStr, iKeyLen);
 				}
