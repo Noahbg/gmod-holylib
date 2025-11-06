@@ -6,6 +6,7 @@
 
 #undef isdigit // Fix for 64x
 #include <charconv>
+#include <unordered_set>
 
 #include "bootil/src/3rdParty/rapidjson/rapidjson.h"
 #include "bootil/src/3rdParty/rapidjson/document.h"
@@ -140,7 +141,7 @@ public:
 	// Lua Table recursive dependencies
 	int iRecursiveStartTop = -1;
 	bool bRecursiveNoError = false;
-	std::vector<int> pRecursiveTableScope;
+	std::unordered_set<const void*> pRecursiveTableScope;
 	char buffer[128];
 };
 
@@ -256,19 +257,8 @@ inline bool StrToIntFast(const char* pStr, size_t iLen, long long& lOut)
 extern void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData* pData, rapidjson::Value& outValue, rapidjson::Document::AllocatorType& allocator);
 void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData* pData, rapidjson::Value& outValue, rapidjson::Document::AllocatorType& allocator)
 {
-	bool bEqual = false;
-	for (int iReference : pData->pRecursiveTableScope)
-	{
-		Util::ReferencePush(pLua, iReference);
-		if (pLua->Equal(-1, -3))
-		{
-			bEqual = true;
-			pLua->Pop(1);
-			break;
-		}
-
-		pLua->Pop(1);
-	}
+	const void* tablePtr = lua_topointer(pLua->GetState(), -2);
+	bool bEqual = pData->pRecursiveTableScope.find(tablePtr) != pData->pRecursiveTableScope.end();
 
 	if (bEqual) {
 		if (pData->bRecursiveNoError)
@@ -281,18 +271,20 @@ void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData
 		pLua->ThrowError("attempt to serialize structure with cyclic reference");
 	}
 
-	pLua->Push(-2);
-	pData->pRecursiveTableScope.push_back(Util::ReferenceCreate(pLua, "TableToJSONRecursive - Scope"));
+	// Add current table to scope set
+	pData->pRecursiveTableScope.insert(tablePtr);
 
 	int idx = 1;
 	bool wasSequential = true;
 	rapidjson::Value jsonObj(rapidjson::kObjectType);
 	rapidjson::Value jsonArr(rapidjson::kArrayType);
-	//int tableSize = pLua->ObjLen(-2);
-	//if (tableSize > 0)
-	//{
-	//	jsonArr.Reserve(tableSize * 8, allocator); // * 8 because we assume each key-value will take up atleast 8 bytes.
-	//}
+	int tableSize = pLua->ObjLen(-2);
+	if (tableSize > 0)
+	{
+		jsonArr.Reserve(tableSize, allocator); // Pre-allocate array capacity to avoid reallocations
+	}
+
+	char keyBuffer[32]; // Buffer for number key conversion
 
 	while (pLua->Next(-2)) {
 		// In bootil, you just don't give a child a name to indicate that it's sequential. 
@@ -312,17 +304,14 @@ void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData
 			switch (iKeyType)
 			{
 				case GarrysMod::Lua::Type::String:
-					key = pLua->GetString(-2); // lua_next won't nuke itself since we don't convert the value
+					key = pLua->GetString(-2);
 					break;
 				case GarrysMod::Lua::Type::Number:
-					pLua->Push(-2);
-					key = pLua->GetString(-1); // lua_next nukes itself when the key isn't an actual string
-					pLua->Pop(1);
+					snprintf(keyBuffer, sizeof(keyBuffer), "%.16g", iKey); // Reuse the cached iKey value
+					key = keyBuffer;
 					break;
 				case GarrysMod::Lua::Type::Bool:
-					pLua->Push(-2);
-					key = pLua->GetString(-1); // lua_next nukes itself when the key isn't an actual string
-					pLua->Pop(1);
+					key = pLua->GetBool(-2) ? "true" : "false";
 					break;
 				default:
 					break;
@@ -393,7 +382,7 @@ void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData
 				char indexKey[32];
 				snprintf(indexKey, sizeof(indexKey), "%u", i + 1);
 				rapidjson::Value k(indexKey, allocator);
-				jsonObj.AddMember(k, jsonArr[i], allocator);
+				jsonObj.AddMember(std::move(k), std::move(jsonArr[i]), allocator);
 			}
 			jsonArr.Clear();
 			//jsonArr.~GenericValue();
@@ -417,8 +406,7 @@ void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData
 
 	pLua->Pop(1);
 
-	Util::ReferenceFree(pLua, pData->pRecursiveTableScope.back(), "TableToJSONRecursive - Free scope");
-	pData->pRecursiveTableScope.pop_back();
+	pData->pRecursiveTableScope.erase(tablePtr);
 }
 
 LUA_FUNCTION_STATIC(util_TableToJSON)
@@ -428,6 +416,7 @@ LUA_FUNCTION_STATIC(util_TableToJSON)
 
 	auto pData = GetUtilLuaData(LUA);
 	pData->bRecursiveNoError = LUA->GetBool(3);
+	pData->pRecursiveTableScope.clear(); // Clear any stale pointers from previous errors
 
 	pData->iRecursiveStartTop = LUA->Top();
 	LUA->Push(1);
@@ -462,7 +451,7 @@ void PushJSONValue(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::Value& 
 	} else if (jsonValue.IsString()) {
 		const char* valueStr = jsonValue.GetString();
 		size_t iStrLength = jsonValue.GetStringLength();
-		if (iStrLength > 2 && valueStr[0] == '[' && valueStr[iStrLength - 1] == ']') {
+		if (iStrLength >= 7 && valueStr[0] == '[' && valueStr[iStrLength - 1] == ']') { // [0 0 0] is 7 characters minimum
 			Vector vec;
 			int nParsed = sscanf(valueStr + 1, "%f %f %f", &vec.x, &vec.y, &vec.z);
 			if (nParsed == 3) {
@@ -470,7 +459,7 @@ void PushJSONValue(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::Value& 
 			} else {
 				pLua->PushString(valueStr, iStrLength);
 			}
-		} else if (iStrLength > 2 && valueStr[0] == '{' && valueStr[iStrLength - 1] == '}') {
+		} else if (iStrLength >= 7 && valueStr[0] == '{' && valueStr[iStrLength - 1] == '}') { // {0 0 0} is 7 characters minimum
 			QAngle ang;
 			int nParsed = sscanf(valueStr + 1, "%f %f %f", &ang.x, &ang.y, &ang.z);
 			if (nParsed == 3) {
