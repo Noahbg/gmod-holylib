@@ -759,7 +759,7 @@ httplib::Server::Handler HttpServer::CreateHandler(const char* path, int func, b
 		auto it = m_pPreparedResponses.find(userID);
 		if (it != m_pPreparedResponses.end())
 		{
-			for (auto vecIT = it->second.begin(); vecIT != it->second.end(); it++)
+			for (auto vecIT = it->second.begin(); vecIT != it->second.end(); vecIT++)
 			{
 				auto pPrepared = *vecIT;
 				if (!pPrepared->ShouldRespond(req))
